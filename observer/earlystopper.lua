@@ -94,6 +94,11 @@ function EarlyStopper:doneEpoch(report, ...)
 end
 
 function EarlyStopper:compareError(current_error, ...)
+   -- if final test, skip all
+   if type(self._epoch) == "string" then
+      return true
+   end
+   
    -- if maximize is true, sign will be -1
    local found_minima = false
    current_error = current_error * self._sign

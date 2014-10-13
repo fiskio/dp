@@ -30,7 +30,7 @@ Experiment.isExperiment = true
 function Experiment:__init(config)
    assert(type(config) == 'table', "Constructor requires key-value arguments")
    local args, id, model, optimizer, validator, tester, 
-         observer, random_seed, epoch, mediator, overwrite, max_epoch, description
+         observer, random_seed, epoch, mediator, overwrite, max_epoch, description, always_test
       = xlua.unpack(
       {config},
       'Experiment', 
@@ -63,7 +63,9 @@ function Experiment:__init(config)
       {arg='max_epoch', type='number', default=1000, 
        help='Maximum number of epochs allocated to the experiment'},
       {arg='description', type='string', default='',
-       help='A short description of the experiment'}
+       help='A short description of the experiment'},
+      {arg='always_test', type='boolean', default=true,
+       help='Should the test set be evalutated at every epoch or only at the end?'}
    )
    self:setRandomSeed(random_seed)
    self._is_done_experiment = false
@@ -78,6 +80,7 @@ function Experiment:__init(config)
    self._mediator = mediator or dp.Mediator()
    self._description = description
    self:setMaxEpoch(max_epoch)
+   self._always_test = always_test
 end
 
 function Experiment:setup(datasource)
@@ -131,12 +134,21 @@ function Experiment:run(datasource)
       if self._validator then
          self._validator:propagateEpoch(valid_set, report)
       end
-      if self._tester then
+      if self._tester and self._always_test then
          self._tester:propagateEpoch(test_set, report)
       end
       report = self:report()
       self._mediator:publish("doneEpoch", report)
    until (self:isDoneExperiment() or self._epoch >= self._max_epoch)
+   
+   -- final test?
+   if self._tester and not self._always_test then
+      self._epoch = 'test'
+      self._tester:propagateEpoch(test_set, report)
+      report = self:report()
+      self._mediator:publish("doneEpoch", report)
+   end
+   
    self._mediator:publish("finalizeExperiment")
 end
 
