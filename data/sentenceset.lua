@@ -126,6 +126,10 @@ function SentenceSet:sub(batch, start, stop)
    
    target_v:forward('b', targets)
    target_v:setClasses(self._words)
+   
+   --print(input_v:forward('bt'))
+   --print(target_v:forward('b'))
+   
    return batch or dp.Batch{
       which_set=self:whichSet(), epoch_size=self:nSample(),
       inputs=input_v, targets=target_v
@@ -152,7 +156,7 @@ function SentenceSet:index(batch, indices)
    -- fill tensor with sentence end tags : <S>
    inputs:fill(self._end_id)
    -- indexSelect the data and reuse memory (optimization)
-   self.__index_mem = self.__index_mem or torch.IntTensor()
+   self.__index_mem = self.__index_mem or torch.LongTensor()
    self.__index_mem:index(self._data, 1, indices)
    local data = self.__index_mem
    local words = self._data:select(2, 2)
@@ -164,6 +168,7 @@ function SentenceSet:index(batch, indices)
       if sample[1] <= sample_stop then
          local sample_start = math.max(sample[1], sample_stop-self._context_size+1)
          local context = words:sub(sample_start, sample_stop)
+         
          sentence_start = self._context_size-context:size(1)
          inputs:select(1, i):narrow(
             1, self._context_size-context:size(1)+1, context:size(1)
