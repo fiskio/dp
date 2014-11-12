@@ -4,8 +4,10 @@
  * [Layer](#dp.Layer) : abstract class inherited by component Models ;
    * [Module](#dp.Module) : generic nn.Module adapter ;
    * [Neural](#dp.Neural) : Linear followed by a Transfer Module;
+   * [Dictionary](#dp.Dictionary) : a LookupTable wrapper using for word embeddings;
    * [Convolution1D](#dp.Convolution1D) : TemporalConvolution followed by a Transfer Module and TemporalMaxPooling;
    * [Convolution2D](#dp.Convolution2D) : SpatialConvolution followed by a Transfer Module and SpatialMaxPooling;
+   * [SoftmaxTree](#dp.SoftmaxTree) : a hierarchy of parameterized softmaxes;
  * [Container](#dp.Container) : abstract class inherited by composite Models;
    * [Sequential](#dp.Sequential) : a sequence of Models.
 
@@ -30,7 +32,7 @@ arguments, those specified in [Node](node.md#dp.Node.__init) also apply.
 ### [output, carry] forward(input, carry) ###
 Forward propagates an `input` [View](view.md#dp.View) to fill and return an `output` View.
  * `input` is a [View](view.md#dp.View) that should have been previously filled by a [forwardPut](view.md#dp.View.forwardPut). The Model will call one or many [forwardGets](view.md#dp.View.forwardGet) to retrieve a Tensor in a suitable format for forward propagation through the Model's internal [Modules](https://github.com/torch/nn/blob/master/doc/module.md#module).
- * `carry` is a table that is carried throughout the graph. A Node can modify it, but should avoid deleting attributes. This is useful when you want to forward/backward information to a later/previous Node in the graph seperated by an unknown number of [Nodes](node.md#dp.Node).
+ * `carry` is a [Carry](data.md#dp.Carry) that is carried throughout the graph. A Node can modify it, but should avoid deleting attributes. This is useful when you want to forward/backward information to a later/previous Node in the graph seperated by an unknown number of [Nodes](node.md#dp.Node).
 
 The returned `output` is a View filled using a forwardPut.
 
@@ -39,7 +41,7 @@ The returned `output` is a View filled using a forwardPut.
 This method is like [forward](#dp.Model.forward), but for evaluation purposes (valid/test).
 This is useful for stochastic Modules like Dropout, which have 
 different behavior for training than for evaluation. The default is to set 
-`carry.evaluate = true` and to call [forward](#dp.Model.forward).
+`carry:putObj('evaluate', true)` and to call [forward](#dp.Model.forward).
 
 <a name="dp.Model.backward"/>
 ### [input, carry] backward(output, carry) ###
@@ -66,6 +68,16 @@ Accepts a `visitor` [Visitor](visitor.md#dp.Visitor) that will visit the Model a
 <a name="dp.Model.reset"/>
 ### reset() ###
 Resets the parameters (and parameter gradients) of the Model.
+
+<a name="dp.Model.toModule"/>
+### toModule([batch]) ###
+Returns its contained Model [Modules](https://github.com/torch/nn/blob/master/doc/module.md#module) 
+and those of it's contained [Views](view.md#dp.View) as a composite Module.
+The method requires that a previous call to [forward](#dp.Model.forward) be made,
+which is done automatically when argument `batch`, a [Batch](data.md#dp.Batch) instance, is provided.
+This is particularly useful when you want to use the [dp](../README.md) framework to train your 
+Modules, but want to omit it in your production environment 
+(and just use [nn](https://github.com/torch/nn/blob/master/README.md) and such instead).
 
 <a name='dp.Layer'/>
 ## Layer ##
@@ -141,6 +153,10 @@ arguments, those specified in [Layer](#dp.Layer.__init) also apply.
  * `transfer` is a [Transfer](https://github.com/torch/nn/blob/master/doc/transfer.md) Module instance like [Tanh](https://github.com/torch/nn/blob/master/doc/transfer.md#nn.Tanh), [Sigmoid](https://github.com/torch/nn/blob/master/doc/transfer.md#nn.Sigmoid), 
 [ReLU]([ReLU](https://github.com/torch/nn/blob/master/doc/transfer.md#relu), etc. If the intent is to use Neural as a linear affine transform (without a non-linearity), one can use an [Identity](https://github.com/torch/nn/blob/master/doc/simple.md#nn.Identity) Module instance.
 
+<a name='dp.Dictionary'/>
+## Dictionary ##
+Adapts a [LookupTable](https://github.com/torch/nn/blob/master/doc/convolution.md#nn.LookupTable). Used primarily for learning word embeddings.
+
 <a name='dp.Convolution1D'/>
 ## Convolution1D ##
 [TemporalConvolution](https://github.com/torch/nn/blob/master/doc/convolution.md#temporalconvolution) (a 1D convolution) followed by a [Transfer](https://github.com/torch/nn/blob/master/doc/transfer.md) Module and a 
@@ -178,6 +194,12 @@ Other then the following arguments, those specified in [Layer](#dp.Layer.__init)
  * `pool_stride` is a table-pair specifying the stride `{width,height}` of the spatial max pooling.
  * `transfer` is a transfer Module like [Tanh](https://github.com/torch/nn/blob/master/doc/transfer.md#nn.Tanh),
 [Sigmoid](https://github.com/torch/nn/blob/master/doc/transfer.md#nn.Sigmoid), [ReLU](https://github.com/torch/nn/blob/master/doc/transfer.md#relu), etc.
+
+<a name='dp.SoftmaxTree'/>
+## SoftmaxTree ##
+A hierarchy of parameterized softmaxes. Used for computing the likelihood of a leaf class. Use with [TreeNLL](loss.md#dp.TreeNLL) Loss. Requires a tensor mapping one `parent_id` to many `child_id`. 
+Greatly accelerates learning and testing for language models with large vocabularies. 
+A vocabulary hierarchy is provided via the [BillionWords](data.md#dp.BillionWords) DataSource.
 
 <a name='dp.Container'/>
 ## Container ##

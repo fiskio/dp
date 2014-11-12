@@ -173,6 +173,36 @@ function dptest.listview()
    }, 2)
    mytester:assertTensorEq(t, c, 0.00001)
 end
+function dptest.carry()
+   local data = torch.rand(3,4)
+   local sizes = {3, 4}
+   local v = dp.DataView('bf', data)
+   local c = dp.Carry()
+   c:putView('data', v)
+   -- indexing
+   local indices = torch.LongTensor{2,3}
+   local c2 = c:index(indices)
+   local v2 = c2:getView('data')
+   mytester:assertTensorEq(v2:forward('bf', 'torch.DoubleTensor'), data:index(1, indices), 0.000001)
+   local c3 = dp.Carry()
+   c3:putView('data', dp.DataView('bf', torch.zeros(8,4)))
+   c:index(c3, indices)
+   local v3 = c3:getView('data')
+   mytester:assertTensorEq(v2:forward('bf', 'torch.DoubleTensor'), v3:forward('bf', 'torch.DoubleTensor'), 0.0000001)
+   mytester:assertTensorEq(v3._input, v2:forward('bf', 'torch.DoubleTensor'), 0.0000001)
+   local c4 = c:index(nil, indices)
+   local v4 = c4:getView('data')
+   mytester:assertTensorEq(v4:forward('bf', 'torch.DoubleTensor'), v2:forward('bf', 'torch.DoubleTensor'), 0.0000001)
+   -- sub
+   local c5 = c:sub(2,3)
+   local v5 = c5:getView('data')
+   mytester:assertTensorEq(v2:forward('bf', 'torch.DoubleTensor'), v5:forward('bf', 'torch.DoubleTensor'), 0.000001)
+   local c6 = c:sub(nil, 2,3)
+   local v6 = c6:getView('data')
+   mytester:assertTensorEq(v2:forward('bf', 'torch.DoubleTensor'), v6:forward('bf', 'torch.DoubleTensor'), 0.000001)
+   c:sub(c6, 1, 2)
+   mytester:assertTensorEq(v6:forward('bf', 'torch.DoubleTensor'), data:sub(1,2), 0.000001)
+end
 function dptest.dataset()
    -- class tensor
    local class_data = torch.randperm(8)
@@ -211,6 +241,7 @@ function dptest.sentenceset()
       -- fill it with start sentence delimiters
       sentence:select(2,1):fill(((i-1)*10)+1)
    end
+   tensor[tensor:size(1)][2] = 2 -- must finish with end_id
    -- 18 words in vocabulary ("<S>" isn't found in tensor since its redundant to "</S>")
    local words = {"</S>", "<UNK>", "the", "it", "is", "to", "view", "huh", "hi", "ho", "oh", "I", "you", "we", "see", "do", "have", "<S>"}
    -- dataset
@@ -242,7 +273,7 @@ function dptest.gcn()
 
    --std_bias = 0.0 is the only value for which there 
    --should be a risk of failure occurring
-   local preprocess = dp.GCN{sqrt_bias=0.0, use_std=true}
+   local preprocess = dp.GCN{sqrt_bias=0.0, use_std=true, progress=false}
    dataset:preprocess{input_preprocess=preprocess}
    local result = dataset:inputs():input():sum()
 
@@ -256,7 +287,7 @@ function dptest.gcn()
    local dv = dp.DataView('bf', torch.rand(3,9))
    local dataset = dp.DataSet{which_set='train', inputs=dv}
    
-   local preprocess = dp.GCN{std_bias=0.0, use_std=false}
+   local preprocess = dp.GCN{std_bias=0.0, use_std=false, progress=false}
    dataset:preprocess{input_preprocess=preprocess}
    local result = dataset:inputs():input()
    local norms = torch.pow(result, 2):sum(2):sqrt()
@@ -267,8 +298,7 @@ function dptest.zca()
    -- Confirm that ZCA.inv_P_ is the correct inverse of ZCA._P.
    local dv = dp.DataView('bf', torch.randn(15,10))
    local dataset = dp.DataSet{which_set='train', inputs=dv}
-   local preprocess = dp.ZCA()
-   preprocess._unit_test = true
+   local preprocess = dp.ZCA{compute_undo=true,progress=false}
    dataset:preprocess{input_preprocess=preprocess}
    local function is_identity(matrix)
       local identity = torch.eye(matrix:size(1))
@@ -280,6 +310,48 @@ function dptest.zca()
    mytester:assert(not is_identity(preprocess._P))
    mytester:assert(is_identity(preprocess._P*preprocess._inv_P))
 end
+function dptest.lecunlcn()
+   -- Test on a random image to confirm that it loads without error
+   -- and it doesn't result in any NaN or Inf values
+   local input_tensor = torch.randn(16, 3, 32, 32)
+   local input = dp.ImageView('bchw', input_tensor:clone())
+   local pp = dp.LeCunLCN{batch_size=5,progress=false}
+   pp:apply(input)
+   mytester:assert(_.isFinite(input:forward('default'):sum()), "LeCunLCN isn't finite")
+
+   -- Test on zero-value image if cause any division by zero
+   input:forward('bchw', input_tensor:clone():zero()) 
+   pp:apply(input)
+   local output1 = input:forward('default')
+   mytester:assert(_.isFinite(output1:sum()), "LeCunLCN isn't finite (div by zero)")
+
+   -- Test if it works fine with different number of channel as argument
+   pp = dp.LeCunLCN{batch_size=5,channels={1, 2},progress=false}
+   input:forward('bchw', input_tensor:clone())
+   pp:apply(input)
+   mytester:assert(_.isFinite(input:forward('default'):sum()), "LeCunLCN isn't finite (less channels)")
+   
+   -- Divide by standard deviation
+   local pp = dp.LeCunLCN{batch_size=5,progress=false,divide_by_std=true}
+   input:forward('bchw', input_tensor:clone())
+   pp:apply(input)
+   local output2 = input:forward('default')
+   mytester:assert(_.isFinite(output2:sum()), "LeCunLCN isn't finite")
+   mytester:assertTensorNe(output1, output2, 0.000001, "LeCunLCN is not dividing by std")
+
+   -- Test on zero-value image if cause any division by zero
+   input:forward('bchw', input_tensor:clone():zero())
+   pp:apply(input)
+   mytester:assert(_.isFinite(input:forward('default'):sum()), "LeCunLCN isn't finite (div by zero)")
+
+   -- Save a test image
+   input_tensor = mytester.lenna:clone()
+   input_tensor = input_tensor:view(1,3,512,512)
+   input:forward("bchw", input_tensor)
+   pp = dp.LeCunLCN{batch_size=1,progress=false}
+   pp:apply(input)
+   image.savePNG(paths.concat(dp.UNIT_DIR, 'lecunlcn.png'), input:forward('default')[1]) 
+end
 function dptest.neural()
    local tensor = torch.randn(5,10)
    local grad_tensor = torch.randn(5, 2)
@@ -287,7 +359,7 @@ function dptest.neural()
    local layer = dp.Neural{input_size=10, output_size=2, transfer=nn.Tanh()}
    local input = dp.DataView()
    input:forward('bf', tensor)
-   local output, carry = layer:forward(input, {nSample=5})
+   local output, carry = layer:forward(input, dp.Carry{nSample=5})
    output:backward('bf', grad_tensor)
    input = layer:backward(output, carry)
    -- nn
@@ -309,7 +381,7 @@ function dptest.neural()
    layer:accept(visitor)
    layer:doneBatch()
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=5})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=5})
    output:backward('bf', grad_tensor)
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten, output:forward('bf'), 0.00001)
@@ -323,8 +395,8 @@ function dptest.neural()
    local input2 = dp.DataView()
    input2:forward('bf', tensor)
    input:forward('bf', tensor)
-   local output2, carry2 = layer2:forward(input2, {nSample=5})
-   local output, carry = layer:forward(input, {nSample=5})
+   local output2, carry2 = layer2:forward(input2, dp.Carry{nSample=5})
+   local output, carry = layer:forward(input, dp.Carry{nSample=5})
    output2:backward('bf', grad_tensor)
    output:backward('bf', grad_tensor)
    input2 = layer2:backward(output2, carry)
@@ -350,10 +422,10 @@ function dptest.sequential()
          dp.Neural{input_size=4, output_size=2, transfer=nn.LogSoftMax()}
       }
    }
-   local output, carry = model:forward(input, {nSample=5})
+   local output, carry = model:forward(input, dp.Carry{nSample=5})
    output:backward('bf', grad_tensor)
    input, carry = model:backward(output, carry)
-   mytester:assert(carry.nSample == 5, "Carry lost an attribute")
+   mytester:assert(carry:getObj('nSample') == 5, "Carry lost an attribute")
    -- nn
    local mlp = nn.Sequential()
    mlp:add(nn.Linear(10,4))
@@ -392,7 +464,7 @@ function dptest.softmaxtree()
    mlp.bias = model._module.bias:clone()
    -- forward backward
    --- dp
-   local output, carry = model:forward(input, {nSample=5, targets=target})
+   local output, carry = model:forward(input, dp.Carry{nSample=5, targets=target})
    local gradWeight = model._module.gradWeight:clone()
    output:backward('b', grad_tensor)
    input, carry = model:backward(output, carry)
@@ -419,12 +491,12 @@ function dptest.softmaxtree()
    mytester:assertTensorNe(weight, weight2, 0.00001)
    model:doneBatch()
    -- forward backward
-   local output2, carry2 = model2:forward(input:clone(), {nSample=5, targets=target})
+   local output2, carry2 = model2:forward(input:clone(), dp.Carry{nSample=5, targets=target})
    output2:backward('b', grad_tensor)
    local input2, carry2 = model2:backward(output2, carry2)
    mytester:assertTensorNe(act_ten, output2:forward('bf'), 0.00001)
    mytester:assertTensorNe(grad_ten, input2:backward('bf'), 0.00001)
-   local output, carry = model:forward(input2:clone(), {nSample=5, targets=target})
+   local output, carry = model:forward(input2:clone(), dp.Carry{nSample=5, targets=target})
    output:backward('b', grad_tensor)
    local input, carry = model:backward(output, carry)
    mytester:assertTensorEq(output:forward('bf'), output2:forward('bf'), 0.00001)
@@ -439,8 +511,8 @@ function dptest.softmaxtree()
    local input2 = dp.DataView()
    input2:forward('bf', input_tensor)
    input:forward('bf', input_tensor)
-   local output2, carry2 = layer2:forward(input2, {nSample=5, targets=target})
-   local output, carry = layer:forward(input, {nSample=5, targets=target})
+   local output2, carry2 = layer2:forward(input2, dp.Carry{nSample=5, targets=target})
+   local output, carry = layer:forward(input, dp.Carry{nSample=5, targets=target})
    output2:backward('b', grad_tensor)
    output:backward('b', grad_tensor)
    input = layer:backward(output, carry)
@@ -481,7 +553,7 @@ function dptest.softmaxforest()
          mytester:assert(math.abs(v:sum()) < 0.0001)
       end
    end
-   local output, carry = model:forward(input, {nSample=5, targets=target})
+   local output, carry = model:forward(input, dp.Carry{nSample=5, targets=target})
    local params, gradParams = model:parameters()
    local gradParams = table.recurse({}, gradParams, function(t,k,v)
       t[k] = v:clone()
@@ -492,7 +564,7 @@ function dptest.softmaxforest()
    mytester:assertTableEq(input:backward('bf'):size():totable(), {5,10}, 0.000001, "Wrong grad size")
    local params2, gradParams2 = model:parameters()
    table.recurse(gradParams, gradParams2, function(t,k,v)
-      mytester:assertTensorNe(t[k], v, 0.00001)
+      mytester:assertTensorNe(t[k], v, 0.0000001)
    end)
    -- nn
    -- experts
@@ -562,7 +634,7 @@ function dptest.mixtureofexperts()
    }
    -- forward backward
    --- dp
-   local output, carry = model:forward(input, {nSample=5})
+   local output, carry = model:forward(input, dp.Carry{nSample=5})
    local params, gradParams = model:parameters()
    local gradParams = table.recurse({}, gradParams, function(t,k,v)
       t[k] = v:clone()
@@ -588,7 +660,7 @@ function dptest.convolution1D()
       kernel_stride=1, pool_size=2, pool_stride=2,
       transfer=nn.Tanh()
    }
-   local output, carry = layer:forward(input, {nSample=8})
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
    mytester:assertTableEq(output:forward('bwc'):size():totable(), output_size, 0.00001)
    output:backward('bwc', grad_tensor)
    input = layer:backward(output, carry)
@@ -614,7 +686,7 @@ function dptest.convolution1D()
    layer:accept(visitor)
    layer:doneBatch()
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=8})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=8})
    output:backward('bwc', grad_tensor)
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten, output:forward('bwc'), 0.00001)
@@ -632,7 +704,7 @@ function dptest.convolution2D()
       kernel_stride={1,1}, pool_size={2,2}, pool_stride={2,2},
       transfer=nn.Tanh()
    }
-   local output, carry = layer:forward(input, {nSample=8})
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
    mytester:assertTableEq(output:forward('bchw'):size():totable(), output_size, 0.00001)
    output:backward('bchw', grad_tensor)
    input = layer:backward(output, carry)
@@ -659,11 +731,41 @@ function dptest.convolution2D()
    layer:accept(visitor)
    layer:doneBatch()
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=8})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=8})
    output:backward('bchw', grad_tensor)
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten, output:forward('bhwc'), 0.00001)
    mytester:assertTensorNe(grad_ten, input:backward('bhwc'), 0.00001)
+end
+function dptest.inception()
+   local size = {8,32,32,3} --bhwc
+   local output_size = {8,16+24+8+12,32,32} --bchw
+   local data = torch.rand(unpack(size))
+   local grad_tensor = torch.randn(unpack(output_size))
+   -- dp
+   local input = dp.ImageView('bhwc', data)
+   local layer = dp.Inception{
+      input_size=3, output_size={16,24}, reduce_size={14,16,8,12}, kernel_size={5,3}, 
+      pool_size=3, pool_stride=1, transfer=nn.ReLU(), sparse_init=true
+   }
+   for i, param in ipairs(layer:parameters()) do
+      mytester:assert(_.isFinite(param:sum()), 'inception init error')
+   end
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
+   mytester:assertTableEq(output:forward('bchw'):size():totable(), output_size, 0.00001)
+   mytester:assert(_.isFinite(output:forward('bchw'):sum()))
+   output:backward('bchw', grad_tensor)
+   input = layer:backward(output, carry)
+   mytester:assertTableEq(input:backward('bhwc'):size():totable(), size, 0.00001)
+   mytester:assert(_.isFinite(input:backward('bhwc'):sum()))
+   layer:updateParameters(0.1)
+   for i, param in ipairs(layer:parameters()) do
+      mytester:assert(_.isFinite(param:sum()), 'inception update error')
+   end
+   layer:maxNorm(1)
+   for i, param in ipairs(layer:parameters()) do
+      mytester:assert(_.isFinite(param:sum()), 'inception maxNorm error')
+   end
 end
 function dptest.dictionary()
    local size = {8,10}
@@ -673,7 +775,7 @@ function dptest.dictionary()
    -- dp
    local input = dp.ClassView('bt', data)
    local layer = dp.Dictionary{dict_size=100, output_size=50}
-   local output, carry = layer:forward(input, {nSample=8})
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
    mytester:assertTableEq(output:forward('bwc'):size():totable(), output_size, 0.00001)
    output:backward('bwc', grad_tensor)
    input = layer:backward(output, carry)
@@ -695,10 +797,86 @@ function dptest.dictionary()
    layer:accept(visitor)
    layer:doneBatch()
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=5})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=8})
    output:backward('bwc', grad_tensor)
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten, output:forward('bwc'), 0.00001)
+end
+function dptest.narrowdictionary()
+   local size = {8,5}
+   local output_size = {8,120}
+   local data = torch.randperm(80):resize(unpack(size))
+   local grad_tensor = torch.randn(unpack(output_size))
+   -- dp
+   local input = dp.ClassView('bt', data)
+   local layer = dp.NarrowDictionary{dict_size=100, output_size=32, delta_size=4}
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
+   mytester:assertTableEq(output:forward('bf'):size():totable(), output_size, 0.00001)
+   output:backward('bf', grad_tensor)
+   input = layer:backward(output, carry)
+   -- should be able to get input gradients
+   local function f() 
+      input:backward('bt') 
+   end 
+   mytester:assert(not pcall(f))
+   -- nn
+   local mlp = nn.NarrowLookupTable(4,100,32,true)
+   mlp:share(layer._module, 'weight')
+   local mlp_act = mlp:forward(input:forward('bt'))
+   -- compare nn and dp
+   mytester:assertTensorEq(mlp_act, output:forward('bf'), 0.00001)
+   -- update
+   local act_ten = output:forward('bf'):clone()
+   layer:updateParameters(0.1)
+   -- forward backward
+   output, carry2 = layer:forward(input, dp.Carry{nSample=8})
+   output:backward('bf', grad_tensor)
+   input, carry2 = layer:backward(output, carry2)
+   mytester:assertTensorNe(act_ten, output:forward('bf'), 0.00001)
+end
+function dptest.recurrentdictionary()
+   local batchSize = 8
+   local dictSize = batchSize * 30
+   local hiddenSize = 10
+   local data = torch.randperm(dictSize):view(batchSize, -1)
+   local gradData = torch.randn(dictSize, batchSize, hiddenSize)
+   -- dp
+   local input = dp.ClassView()
+   local layer = dp.RecurrentDictionary{dict_size=dictSize, output_size=hiddenSize}
+   layer:zeroGradParameters()
+   -- nn
+   local rnn = nn.Recurrent(hiddenSize, nn.LookupTable(dictSize, hiddenSize), nn.Linear(hiddenSize, hiddenSize))
+   rnn.feedbackModule.weight = layer._feedback.weight:clone()
+   rnn.feedbackModule.bias = layer._feedback.bias:clone()
+   rnn.inputModule.weight = layer._lookup.weight:clone()
+   rnn.startModule.bias = layer._recurrent.startModule.bias:clone()
+   rnn:zeroGradParameters()
+   -- compare
+   for step=1,10 do
+      -- forward
+      local inputTensor = data:select(2,step)
+      input:forward('b', inputTensor)
+      local output, carry = layer:forward(input, dp.Carry{nSample=batchSize})
+      local outputTensor = rnn:forward(inputTensor)
+      mytester:assertTensorEq(outputTensor, output:forward('bf'), 0.000001)
+      -- backward
+      local gradOutputTensor = gradData[step]
+      output:backward('bf', gradOutputTensor)
+      layer:backward(output, carry)
+      rnn:backward(inputTensor, gradOutputTensor)
+   end
+   -- updateParameters  (and BPTT)
+   layer:updateParameters(0.1)
+   rnn:updateParameters(0.1)
+   local params = layer:parameters()
+   local params2 = rnn:parameters()
+   mytester:assert(table.length(params) ~= #params2, "missing specific case for lookuptable")
+   layer.forwarded = false
+   local params = layer:parameters()
+   mytester:assert(#params == #params2, #params.." should equal "..#params2)
+   for i, param in ipairs(params) do
+      mytester:assertTensorEq(param, params2[i], 0.000001, "error in update "..i)
+   end
 end
 function dptest.nll()
    local input_tensor = torch.randn(5,10)
@@ -709,7 +887,7 @@ function dptest.nll()
    local loss = dp.NLL{size_average=false} -- else loss isn't avg
    -- test conversion
    loss:float()
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.ClassNLLCriterion():float()
@@ -728,7 +906,7 @@ function dptest.kldivergence()
    local loss = dp.KLDivergence{size_average=false} -- else loss isn't avg
    -- test conversion
    loss:float()
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.DistKLDivCriterion():float()
@@ -746,7 +924,7 @@ function dptest.treenll()
    local target = dp.ClassView('b', target_tensor)
    local loss = dp.TreeNLL{size_average=false} -- else loss isn't avg
    -- the targets are actually ignored (SoftmaxTree uses them before TreeNLL)
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.ClassNLLCriterion()
@@ -767,7 +945,7 @@ function dptest.criterion()
    } -- else loss isn't avg
    -- test conversion
    loss:float()
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.ClassNLLCriterion():float()
@@ -777,10 +955,137 @@ function dptest.criterion()
    mytester:asserteq(c_err, err, 0.000001)
    mytester:assertTensorEq(c_grad, input:backward('bf'):float(), 0.00001)
 end
+function dptest.tomodule()
+   local datasource = dp.Mnist()
+   local batch = datasource:trainSet():sub(1,32)
+   local model = dp.Sequential{
+      models = {
+         dp.Neural{input_size=datasource:featureSize(), output_size=100, transfer=nn.Tanh()},
+         dp.Neural{input_size=100, output_size=#(datasource:classes()),transfer=nn.LogSoftMax()}
+      }
+   }
+   local mlp = model:toModule(batch)
+   local outputView = model:forward(batch:inputs(), batch:carry())
+   local output = mlp:forward(batch:inputs():forward('default'))
+   mytester:assertTensorEq(outputView:forward('default'), output, 0.00001)
+end
+function dptest.sentencesampler()
+   local nIndice = 300
+   local batchSize = 10
+   
+   -- create dummy sentence dataset
+   local data = torch.IntTensor(nIndice, 2):zero()
+   data:select(2,2):copy(torch.range(1,nIndice))
+   local start_id, end_id = nIndice+1, nIndice+2
+   local startIdx = 1
+   local nSentence = 1
+   local count = 0
+   for i=1,nIndice do
+      data[i][1] = startIdx
+      if i < nIndice - 5 and count > 3 and math.random() < 0.1 then
+         data[i][2] = end_id
+         startIdx = i+1
+         nSentence = nSentence + 1
+         count = 0
+      end
+      count = count + 1
+   end
+   data[nIndice][2] = end_id
+   
+   local epochSize = nIndice / 10
+   local dataset = dp.SentenceSet{data=data,which_set='train',start_id=start_id,end_id=end_id}
+   local nWord = 0
+   for sentenceSize,s in pairs(dataset:groupBySize()) do
+      nWord = nWord + (s.count*sentenceSize)
+   end
+   mytester:assert(nWord == nIndice, "error in groupBySize "..nWord..' vs '..nIndice)
+   
+   local sampler = dp.SentenceSampler{batch_size=batchSize,epoch_size=epochSize,evaluate=false}
+   local batchSampler = sampler:sampleEpoch(dataset)
+   local sampled = {}
+   local nSampled = 0
+   while nSampled < epochSize do
+      local batch = batchSampler(batch)
+      mytester:assert(batch.isBatch)
+      local inputs = batch:inputs():input()
+      local targets = batch:targets():input()
+      mytester:assert(inputs:dim() == 1)
+      mytester:assert(targets:dim() == 1)
+      mytester:assert(inputs:size(1) == targets:size(1))
+      for i=1,inputs:size(1) do
+         local wordIdx = inputs[i]
+         if wordIdx ~= start_id and wordIdx ~= end_id then
+            local exists = sampled[wordIdx]
+            mytester:assert(not exists, 'word sampled twice '..wordIdx)
+            sampled[wordIdx] = true
+         end
+      end
+      nSampled = nSampled + inputs:size(1)
+   end
+   mytester:assert(not batchSampler(batch), "iterator not stoping")
+   
+   local epochSize = nIndice
+   local dataset = dp.SentenceSet{data=data,which_set='train',start_id=start_id,end_id=end_id}
+   local sampler = dp.SentenceSampler{batch_size=batchSize,epoch_size=epochSize,evaluate=false}
+   local batchSampler = sampler:sampleEpoch(dataset)
+   local sampled = {}
+   local nSampled = 0
+   local sampledTwice = 0
+   while nSampled < epochSize do
+      local batch = batchSampler(batch)
+      mytester:assert(batch.isBatch)
+      local inputs = batch:inputs():input()
+      local targets = batch:targets():input()
+      mytester:assert(inputs:dim() == 1)
+      mytester:assert(targets:dim() == 1)
+      mytester:assert(inputs:size(1) == targets:size(1))
+      for i=1,inputs:size(1) do
+         local wordIdx = inputs[i]
+         if wordIdx ~= start_id and wordIdx ~= end_id then
+            if sampled[wordIdx] then
+               sampledTwice = sampledTwice + 1
+            end
+            sampled[wordIdx] = true
+         end
+      end
+      nSampled = nSampled + inputs:size(1)
+   end
+   
+   mytester:assert(sampledTwice == 0, sampledTwice..' words sampled twice ')
+   mytester:assert(not batchSampler(batch), "iterator not stoping")
+   mytester:assert(table.length(sampled) == nIndice-nSentence, "not all words were sampled")
+   
+   local sampled = {}
+   local nSampled = 0
+   local sampledTwice = 0
+   while nSampled < epochSize do
+      local batch = batchSampler(batch)
+      mytester:assert(batch.isBatch)
+      local inputs = batch:inputs():input()
+      local targets = batch:targets():input()
+      mytester:assert(inputs:dim() == 1)
+      mytester:assert(targets:dim() == 1)
+      mytester:assert(inputs:size(1) == targets:size(1))
+      for i=1,inputs:size(1) do
+         local wordIdx = inputs[i]
+         if wordIdx ~= start_id and wordIdx ~= end_id then
+            if sampled[wordIdx] then
+               sampledTwice = sampledTwice + 1
+            end
+            sampled[wordIdx] = true
+         end
+      end
+      nSampled = nSampled + inputs:size(1)
+   end
+   mytester:assert(sampledTwice == 0, sampledTwice..' words sampled twice ')
+   mytester:assert(not batchSampler(batch), "iterator not stoping")
+   mytester:assert(table.length(sampled) == nIndice-nSentence, "not all words were sampled")
+end
 
 function dp.test(tests)
    math.randomseed(os.time())
    mytester = torch.Tester()
+   mytester.lenna = image.loadPNG("test/Lenna.png")
    mytester:add(dptest)
    mytester:run(tests)   
    return mytester

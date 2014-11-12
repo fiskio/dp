@@ -56,7 +56,7 @@ build :
  1. [FacialKeypoints](#facialkeypoints) : wrapper for the DataSource;
  2. [FKDKaggle](#fkdkaggle) : a Feedback for creating a Kaggle submission out of predictions;
  3. [FacialKeypointFeedback](#facialkeypointfeedback) : a Feedback for monitoring performance (and comparing to baseline);
- 4. [MultiSoftMax](#multisoftmax) : a nn.Module that will allow us to apply a softmax for each keypoint.
+ 4. [MultiSoftMax](#multisoftmax) : a nn.Module that will allow us to apply a softmax for each keypoint;
  5. [facialkeypointsdetector.lua](#facialkeypointsdetector.lua) : main launch script; 
 
 ### FacialKeypoints ###
@@ -219,7 +219,7 @@ It uses a `makeTargets` method to transform a scalar keypoint
 coordinate (for one axis) into a vector of size 98 with a gaussian 
 blur centered around the original scalar value. So a Tensor of size 
 `(batchSize, nKeypoints*2)` is transformed into another of size 
-`(bathcSize, nKeypoints*2, 98)`: 
+`(batchSize, nKeypoints*2, 98)`: 
 ```lua
 function FacialKeypoints:makeTargets(y)
    -- y : (batch_size, num_keypoints*2)
@@ -285,10 +285,10 @@ It is good practice to make all data accessible from such DataSource
 classes. Even if some of the data is required to initialize 
 other objects. This is the case for example of the FKDKaggle and 
 FacialKeypoints Feedbacks, which are initialized with the output of 
-`loadSubmission` and `loadBaseline`.
+this DataSource's `loadSubmission` and `loadBaseline` methods.
 
 ### FKDKaggle ###
-Feedbacks are a little tricky to get the hand off,
+Feedbacks are a little tricky to get the hang of,
 but are very useful for extending an experiment with task-tailored 
 I/O functionality. 
 The [FKDKaggle](../feedback/fkdkaggle.lua) is a Feedback class 
@@ -826,18 +826,8 @@ cnn:add(
    }
 )
 ```
-We also have the usual Visitor and CUDA options:
+We also have the usual Visitor options:
 ```lua
-print(cnn)
-
---[[GPU or CPU]]--
-if opt.cuda then
-   require 'cutorch'
-   require 'cunn'
-   cutorch.setDevice(opt.useDevice)
-   cnn:cuda()
-end
-
 local visitor = {}
 -- the ordering here is important:
 if opt.momentum > 0 then
@@ -883,7 +873,7 @@ test = dp.Evaluator{
 }
 ```
 Finally, all components are assembled in the Experiment. The 
-EarlyStopper uses uses the FacialKeypointFeedback's `mse` report attribute 
+EarlyStopper uses the FacialKeypointFeedback's `mse` report attribute 
 for cross-validation:
 ```lua
 --[[Experiment]]--
@@ -902,12 +892,29 @@ xp = dp.Experiment{
    random_seed = os.time(),
    max_epoch = opt.maxEpoch
 }
+```
+After optionally casting the experiment to CUDA and setting the device,
+the `dp.Model` and `nn.Module` structure is printed to screen and 
+the experiment is run:
+```lua
+--[[GPU or CPU]]--
+if opt.cuda then
+   require 'cutorch'
+   require 'cunn'
+   cutorch.setDevice(opt.useDevice)
+   xp:cuda()
+end
+
+print"dp.Models :"
+print(cnn)
+print"nn.Modules :"
+print(cnn:toModule(datasource:trainSet():sub(1,32)))
 
 xp:run(datasource)
 ```
 ## Running Experiments ##
 The last step is to use the components assembled in the launch script 
-to run some experiments, and maybe even optimize hyper-parameters"
+to run some experiments, and maybe even optimize hyper-parameters:
 ```bash
 th examples/facialkeypointdetector.lua --learningRate 0.1 --maxOutNorm 2 --cuda --useDevice 1 --batchSize 16 --channelSize '{96,96}' --kernelSize '{7,7}' --poolSize '{2,2}' --poolStride '{2,2}' --hiddenSize 3000 --maxEpoch 1000 --maxTries 100 --accUpdate --normalInit --activation ReLU --submissionFile cnn1.csv
 ```
