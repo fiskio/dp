@@ -228,7 +228,7 @@ function SentenceSet:groupBySize(bufferSize)
                if i == nTotalWord then
                   nWord = nWord + 1
                end
-               assert(nWord > 1, "empty sentence encountered")
+               assert(nWord >= 1, "empty sentence encountered")
                local s = sentenceCache[nWord]
                if not s then
                   s = {indices=torch.LongTensor(bufferSize), count=0}
