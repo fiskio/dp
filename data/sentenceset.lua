@@ -170,7 +170,7 @@ function SentenceSet:index(batch, indices)
    -- fill tensor with sentence end tags : <S>
    inputs:fill(self._end_id)
    -- indexSelect the data and reuse memory (optimization)
-   self.__index_mem = self.__index_mem or torch.LongTensor()
+   self.__index_mem = self.__index_mem or torch.IntTensor()
    self.__index_mem:index(self._data, 1, indices)
    local data = self.__index_mem
    local words = self._data:select(2, 2)
