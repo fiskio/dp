@@ -11,13 +11,17 @@ function Perplexity:__init(config)
    config = config or {}
    assert(torch.type(config) == 'table' and not config[1],
       "Constructor requires key-value arguments")
-   local args, name = xlua.unpack(
+   local args, ignore_list, name = xlua.unpack(
       {config},
       'Perplexity',
       'Computes perplexity for language models',
+      {arg='ignore_list', type='table', default={},
+       help='array of tokens to be ignored'},
       {arg='name', type='string', default='perplexity',
        help='name identifying Feedback in reports'}
    )
+   self._ignore_set = {}
+   for k,v in ipairs(ignore_list) do self._ignore_set[v] = true end
    config.name = name
    parent.__init(self, config)
    self._nll = 0
@@ -49,7 +53,11 @@ function Perplexity:_add(batch, output, carry, report)
       local targets = batch:targets():forward('b')
       local sum = 0
       for i=1,targets:size(1) do
-         sum = sum + act[i][targets[i]]
+         if self._ignore_set[targets[i]] then
+            self._n_sample = self._n_sample - 1
+         else
+            sum = sum + act[i][targets[i]]
+         end
       end
 
       self._nll = self._nll - sum
