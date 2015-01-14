@@ -17,7 +17,7 @@ function NLL:__init(config)
 end
 
 function NLL:_type(type)
-   if type == 'torch.FloatTensor' or type == 'torch.DoubleTensor' then
+   if type == 'torch.FloatTensor' or type == 'torch.DoubleTensor' or type == 'torch.CudaTensor' then
       self._input_type = type
       self._criterion:type(type)
    elseif type == 'torch.IntTensor' or type == 'torch.LongTensor' then
