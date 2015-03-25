@@ -20,7 +20,7 @@ function SoftmaxTree:__init(config)
        help='Number of input neurons'},
       {arg='hierarchy', type='table', req=true,
        help='A table mapping parent_ids to a tensor of child_ids'},
-      {arg='root_id', type='number | string', default=1,
+      {arg='root_id', type='number', default=1,
        help='id of the root of the tree.'},
       {arg='typename', type='string', default='softmaxtree', 
        help='identifies Model type in reports.'}
@@ -85,16 +85,11 @@ function SoftmaxTree:_type(type)
    return self
 end
 
-function SoftmaxTree:zeroGradParameters()
-   if not self._acc_update then
-      self._module:zeroGradParameters()
-   end
-end
-
 -- if after feedforward, returns active parameters 
 -- else returns all parameters
 function SoftmaxTree:parameters()
-   return self._module:parameters()
+   local params, gradParams = self._module:parameters()
+   return params, gradParams, nil, self._module.nChildNode * 2
 end
 
 function SoftmaxTree:sharedClone()
@@ -116,9 +111,6 @@ end
 
 function SoftmaxTree:maxNorm(max_out_norm)
    self._smt:maxNorm(max_out_norm, true)
-   if self._acc_update then
-      self._smt.updates = {}
-   end
 end
 
 function SoftmaxTree:pushDropout(dropout)

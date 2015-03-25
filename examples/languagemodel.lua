@@ -49,10 +49,12 @@ cmd:option('--trainEpochSize', 1000000, 'number of train examples seen between e
 cmd:option('--validEpochSize', 100000, 'number of valid examples used for early stopping and cross-validation') 
 cmd:option('--trainOnly', false, 'forget the validation and test sets, focus on the training set')
 cmd:option('--progress', false, 'print progress bar')
-
+cmd:option('--silent', false, 'dont print anything to stdout')
 cmd:text()
 opt = cmd:parse(arg or {})
-table.print(opt)
+if not opt.silent then
+   table.print(opt)
+end
 
 
 --[[data]]--
@@ -68,12 +70,19 @@ local datasource = dp.BillionWords{
 }
 
 --[[Model]]--
-print("Input to first hidden layer has "..
+
+local inputModel = dp.Dictionary{
+   dict_size = datasource:vocabularySize(),
+   output_size = opt.inputEmbeddingSize,
+   acc_update = opt.accUpdate
+}
+
+dp.vprint(not opt.silent, "Input to first hidden layer has "..
    opt.contextSize*opt.inputEmbeddingSize.." neurons.")
 
 local hiddenModel, inputSize
 if opt.convolution then
-   print"Using convolution for first hidden layer"
+   dp.vprint(not opt.silent, "Using convolution for first hidden layer")
    hiddenModel = dp.Convolution1D{
       input_size = opt.inputEmbeddingSize, 
       output_size = opt.convOutputSize,
@@ -86,7 +95,7 @@ if opt.convolution then
       acc_update = opt.accUpdate
    }
    local nOutputFrame = hiddenModel:outputSize(opt.contextSize, 'bwc')
-   print("Convolution has "..nOutputFrame.." output Frames")
+   dp.vprint(not opt.silent, "Convolution has "..nOutputFrame.." output Frames")
    inputSize = nOutputFrame*opt.convOutputSize
 else
    hiddenModel = dp.Neural{
@@ -99,7 +108,7 @@ else
    inputSize = opt.neuralSize
 end
 
-print("Input to second hidden layer has size "..inputSize)
+dp.vprint(not opt.silent, "Input to second hidden layer has size "..inputSize)
 
 local softmax
 if opt.softmaxforest then
@@ -140,11 +149,7 @@ end
 
 mlp = dp.Sequential{
    models = {
-      dp.Dictionary{
-         dict_size = datasource:vocabularySize(),
-         output_size = opt.inputEmbeddingSize,
-         acc_update = opt.accUpdate
-      },
+      inputModel,
       hiddenModel,
       dp.Neural{
          input_size = inputSize, 
@@ -218,7 +223,10 @@ if opt.cuda then
    xp:cuda()
 end
 
-print"dp.Models :"
-print(mlp)
+xp:verbose(not opt.silent)
+if not opt.silent then
+   print"dp.Models :"
+   print(mlp)
+end
 
 xp:run(datasource)

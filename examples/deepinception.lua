@@ -26,7 +26,7 @@ cmd:option('--lecunlcn', false, 'apply Yann LeCun Local Contrast Normalization (
 cmd:option('--convChannelSize', '{64,128}', 'Number of output channels (number of filters) for each convolution layer.')
 cmd:option('--convKernelSize', '{5,5}', 'kernel size of each convolution layer. Height = Width')
 cmd:option('--convKernelStride', '{1,1}', 'kernel stride of each convolution layer. Height = Width')
-cmd:option('--convPoolSize', '{2,2}', 'size of the max pooling of each convolution layer. Height = Width')
+cmd:option('--convPoolSize', '{2,2}', 'size of the max pooling of each convolution layer. Height = Width. (zero means no pooling)')
 cmd:option('--convPoolStride', '{2,2}', 'stride of the max pooling of each convolution layer. Height = Width')
 -- inception layers
 cmd:option('--incepChannelSize', '{{32,48},{32,64}}', 'A list of tables of the number of filters in the non-1x1-convolution kernel sizes. Creates an Inception model for each sub-table.')
@@ -49,9 +49,12 @@ cmd:option('--maxEpoch', 1000, 'maximum number of epochs to run')
 cmd:option('--maxTries', 50, 'maximum number of epochs to try to find a better local minima for early-stopping')
 cmd:option('--accUpdate', false, 'accumulate gradients inplace (much faster, but cant be used with momentum')
 cmd:option('--progress', false, 'print progress bar')
+cmd:option('--silent', false, 'dont print anything to stdout')
 cmd:text()
 opt = cmd:parse(arg or {})
-table.print(opt)
+if not opt.silent then
+   table.print(opt)
+end
 
 if opt.activation == 'ReLU' and not opt.normalInit then
    print("Warning : you should probably use --normalInit with ReLUs for "..
@@ -156,7 +159,7 @@ for i=1,#opt.incepChannelSize do
 end
 
 inputSize = inputSize*height*width
-print("input to first Neural layer has: "..inputSize.." neurons")
+dp.vprint(not opt.silent, "input to first Neural layer has: "..inputSize.." neurons")
 
 for i,hiddenSize in ipairs(opt.hiddenSize) do
    local dense = dp.Neural{
@@ -241,9 +244,12 @@ if opt.cuda then
    xp:cuda()
 end
 
-print"dp.Models :"
-print(cnn)
-print"nn.Modules :"
-print(cnn:toModule(datasource:trainSet():sub(1,32)))
+xp:verbose(not opt.silent)
+if not opt.silent then
+   print"dp.Models :"
+   print(cnn)
+   print"nn.Modules :"
+   print(cnn:toModule(datasource:trainSet():sub(1,32)))
+end
 
 xp:run(datasource)

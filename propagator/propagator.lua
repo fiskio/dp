@@ -11,8 +11,8 @@ Propagator.isPropagator = true
 
 function Propagator:__init(config)   
    assert(type(config) == 'table', "Constructor requires key-value arguments")
-   local args, loss, visitor, sampler, observer, feedback, progress, stats
-      = xlua.unpack(
+   local args, loss, visitor, sampler, observer, feedback, progress,
+      verbose, stats = xlua.unpack(
       {config},
       'Propagator', 
       'Propagates Batches sampled from a DataSet using a Sampler '..
@@ -32,8 +32,11 @@ function Propagator:__init(config)
        'and provides feedback through report(), setState, or mediator'},
       {arg='progress', type='boolean', default=false, 
        help='display progress bar'},
+      {arg='verbose', type='boolean', default=true,
+       help='print verbose information'},
       {arg='stats', type='boolean', default=false,
-       help='display statistics'}
+       help='display performance statistics (speed, etc). '..
+      'Only applies if verbose is true.'}
    )
    self:setSampler(sampler or dp.Sampler())
    self:setLoss(loss)
@@ -41,6 +44,7 @@ function Propagator:__init(config)
    self:setFeedback(feedback)
    self:setVisitor(visitor)
    self._progress = progress
+   self._verbose = verbose
    self._stats = stats
    self.output = {}
 end
@@ -63,9 +67,9 @@ function Propagator:setup(config)
        'Propagator should not hold a reference to a dataset due to ' ..
        'the propagator\'s possible serialization.'}
    )
-   assert(id.isObjectID)
+   assert(torch.isTypeOf(id, 'dp.ObjectID'))
    self._id = id
-   assert(mediator.isMediator)
+   assert(torch.isTypeOf(mediator, 'dp.Mediator'))
    self._mediator = mediator
    self:setModel(model)
    self._sampler:setup{mediator=mediator, model=model}
@@ -91,13 +95,17 @@ function Propagator:propagateEpoch(dataset, report)
    local batch, i, n, last_n
    local n_batch = 1
    
-   if self._stats then
-      print('==> epoch # '..(report.epoch + 1)..' for '..self:name())
+   if self._stats and self._verbose then
+      print('==> epoch # '..(report.epoch + 1)..' for '..self:name()..' :')
    end
    
    local sampler = self._sampler:sampleEpoch(dataset)
    while true do
       -- reuse the batch object
+      if batch then
+         assert(torch.type(batch) == 'dp.Batch')
+      end
+      
       batch, i, n = sampler(batch)
       if not batch then 
          -- for aesthetics :
@@ -106,31 +114,24 @@ function Propagator:propagateEpoch(dataset, report)
          end
          break 
       end
+      
       self:propagateBatch(batch, report)
+      
       if self._progress then
-         -- disp progress
+         -- display progress
          xlua.progress(i, n)
       end
       last_n = n
       n_batch = n_batch + 1
    end
    
-   if self._progress and not self._stats then
-      print"\n"
-   end
-   
    -- time taken
    self._epoch_duration = sys.clock() - start_time
    self._batch_duration = self._epoch_duration / last_n
    self._example_speed = last_n / self._epoch_duration
-   self._num_batches = last_n / n_batch
-   self._batch_speed = (self._num_batches / self._epoch_duration)
-   if self._stats then
-      print("\n==> epoch size = "..last_n..' examples')
-      print("==> batch duration = "..(self._batch_duration*1000)..' ms')
-      print("==> epoch duration = " ..self._epoch_duration..' s')
+   self._batch_speed = (n_batch / self._epoch_duration)
+   if self._stats and self._verbose then
       print("==> example speed = "..self._example_speed..' examples/s')
-      print("==> batch speed = "..self._batch_speed..' batches/s')
    end
 end      
 
@@ -211,7 +212,7 @@ function Propagator:model()
 end
 
 function Propagator:setObserver(observer)
-   if not torch.typename(observer) and type(observer) == 'table' then
+   if torch.type(observer) == 'table' then
       --if list, make composite observer
       observer = dp.CompositeObserver(observer)
    end
@@ -223,7 +224,7 @@ function Propagator:observer()
 end
 
 function Propagator:setVisitor(visitor)
-   if not torch.typename(visitor) and type(visitor) == 'table' then
+   if torch.type(visitor) == 'table' then
       --if list, make visitor_chain
       visitor = dp.VisitorChain{visitors=visitor}
    end
@@ -235,7 +236,7 @@ function Propagator:visitor()
 end
 
 function Propagator:setFeedback(feedback)
-   if not torch.typename(feedback) and type(feedback) == 'table' then
+   if torch.type(feedback) == 'table' then
       --if list, make visitor_chain
       feedback = dp.CompositeFeedback{feedbacks=feedback}
    end
@@ -260,6 +261,27 @@ end
 
 function Propagator:loss()
    return self._loss
+end
+
+function Propagator:verbose(verbose)
+   self._verbose = (verbose == nil) and true or verbose
+   if self._loss then
+      self._loss:verbose(self._verbose)
+   end
+   if self._feedback then
+      self._feedback:verbose(self._verbose)
+   end
+   if self._visitor then 
+      self._visitor:verbose(self._verbose)
+   end
+   if self._observer then
+      self._observer:verbose(self._verbose)
+   end
+   --TODO self._sampler:verbose()
+end
+
+function Propagator:silent()
+   self:verbose(false)
 end
 
 function Propagator:type(new_type)

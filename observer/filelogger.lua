@@ -17,8 +17,9 @@ function FileLogger:setup(config)
    local subject_path = self._subject:id():toPath()
    self._save_dir = paths.concat(self._base_save_dir, subject_path)
    self._log_dir = paths.concat(self._save_dir, 'log')
-   self:checkDir()
-   print("FileLogger: log will be written to " .. self._log_dir)
+   --creates directories if required
+   os.execute('mkdir -p ' .. self._log_dir)
+   dp.vprint(self._verbose, "FileLogger: log will be written to " .. self._log_dir)
 end
 
 function FileLogger:doneEpoch(report)

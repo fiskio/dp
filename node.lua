@@ -12,7 +12,8 @@ function Node:__init(config)
    assert(torch.type(config) == 'table' and not config[1], 
       "Constructor requires key-value arguments")
    local default_type = torch.getdefaulttensortype()
-   local args, input_type, output_type, module_type = xlua.unpack(
+   local args, input_type, output_type, module_type, verbose 
+      = xlua.unpack(
       {config},
       'Node', 
       'Forward and backward propagates representations.',
@@ -21,13 +22,16 @@ function Node:__init(config)
       {arg='output_type', type='string', default=default_type,
        help='type of output activation and gradient tensors'},
       {arg='module_type', type='string', default=default_type,
-       help='type of modules used in this Node'}
+       help='type of modules used in this Node'},
+      {arg='verbose', type='boolean', default=true,
+       help='print verbose messages'}
    )
    self:inputType(input_type)
    self:outputType(output_type)
    self:moduleType(module_type)
    self:zeroStatistics()
    self:doneBatch()
+   self._verbose = verbose
 end
 
 function Node:setup(config)
@@ -118,33 +122,51 @@ function Node:coroutineClone()
 end
 
 function Node:inputView(input_view)
-   self._input_view = input_view or self._input_view
+   if input_view then
+      assert(torch.type(input_view) == 'string')
+      self._input_view = input_view
+   end
    return self._input_view
 end
 
 function Node:outputView(output_view)
-   self._output_view = output_view or self._output_view
+   if output_view then
+      assert(torch.type(output_view) == 'string')
+      self._output_view = output_view
+   end
    return self._output_view
 end
 
 function Node:outputType(output_type)
-   self._output_type = output_type or self._output_type
+   if output_type then
+      assert(torch.type(output_type) == 'string')
+      self._output_type = output_type 
+   end
    return self._output_type
 end
 
 function Node:inputType(input_type)
-   self._input_type = input_type or self._input_type
+   if input_type then
+      assert(torch.type(input_type) == 'string')
+      self._input_type = input_type
+   end
    return self._input_type
 end
 
-function Node:outputType(output_type)
-   self._output_type = output_type or self._output_type
-   return self._output_type
+function Node:moduleType(module_type)
+   if module_type then
+      assert(torch.type(module_type) == 'string')
+      self._module_type = module_type
+   end
+   return self._module_type
 end
 
-function Node:moduleType(module_type)
-   self._module_type = module_type or self._module_type
-   return self._module_type
+function Node:verbose(verbose)
+   self._verbose = (verbose == nil) and true or verbose
+end
+
+function Node:silent()
+   self:verbose(false)
 end
 
 -- changes the type of internal variables inplace (same as nn)

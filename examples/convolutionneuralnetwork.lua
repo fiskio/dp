@@ -12,10 +12,11 @@ cmd:option('--maxOutNorm', 1, 'max norm each layers output neuron weights')
 cmd:option('--maxNormPeriod', 2, 'Applies MaxNorm Visitor every maxNormPeriod batches')
 cmd:option('--momentum', 0, 'momentum')
 cmd:option('--channelSize', '{64,128}', 'Number of output channels for each convolution layer.')
-cmd:option('--kernelSize', '{5,5}', 'kernel size of each convolution layer. Height = Width')
-cmd:option('--kernelStride', '{1,1}', 'kernel stride of each convolution layer. Height = Width')
-cmd:option('--poolSize', '{2,2}', 'size of the max pooling of each convolution layer. Height = Width')
-cmd:option('--poolStride', '{2,2}', 'stride of the max pooling of each convolution layer. Height = Width')
+cmd:option('--kernelSize', '{5,5,5,5}', 'kernel size of each convolution layer. Height = Width')
+cmd:option('--kernelStride', '{1,1,1,1}', 'kernel stride of each convolution layer. Height = Width')
+cmd:option('--poolSize', '{2,2,2,2}', 'size of the max pooling of each convolution layer. Height = Width')
+cmd:option('--poolStride', '{2,2,2,2}', 'stride of the max pooling of each convolution layer. Height = Width')
+cmd:option('--padding', '{0,0,0,0}', 'amount of zero padding added to the input layer ( should be lower than math.floor(kernelSize/2)') 
 cmd:option('--batchSize', 128, 'number of examples per batch')
 cmd:option('--cuda', false, 'use CUDA')
 cmd:option('--useDevice', 1, 'sets the device (GPU) to use')
@@ -32,9 +33,12 @@ cmd:option('--dropout', false, 'use dropout')
 cmd:option('--dropoutProb', '{0.2,0.5,0.5}', 'dropout probabilities')
 cmd:option('--accUpdate', false, 'accumulate gradients inplace')
 cmd:option('--progress', false, 'print progress bar')
+cmd:option('--silent', false, 'dont print anything to stdout')
 cmd:text()
 opt = cmd:parse(arg or {})
-table.print(opt)
+if not opt.silent then
+   table.print(opt)
+end
 
 if opt.activation == 'ReLU' and not opt.normalInit then
    print("Warning : you should probably use --normalInit with ReLUs for "..
@@ -42,12 +46,14 @@ if opt.activation == 'ReLU' and not opt.normalInit then
 end
 
 opt.channelSize = table.fromString(opt.channelSize)
+opt.padding = table.fromString(opt.padding)
 opt.kernelSize = table.fromString(opt.kernelSize)
 opt.kernelStride = table.fromString(opt.kernelStride)
 opt.poolSize = table.fromString(opt.poolSize)
 opt.poolStride = table.fromString(opt.poolStride)
 opt.dropoutProb = table.fromString(opt.dropoutProb)
 opt.hiddenSize = table.fromString(opt.hiddenSize)
+
 
 --[[preprocessing]]--
 local input_preprocess = {}
@@ -91,6 +97,7 @@ depth = 1
 for i=1,#opt.channelSize do
    local conv = dp.Convolution2D{
       input_size = inputSize, 
+      padding = opt.padding[i],
       kernel_size = {opt.kernelSize[i], opt.kernelSize[i]},
       kernel_stride = {opt.kernelStride[i], opt.kernelStride[i]},
       pool_size = {opt.poolSize[i], opt.poolSize[i]},
@@ -106,7 +113,7 @@ for i=1,#opt.channelSize do
    depth = depth + 1
 end
 inputSize = inputSize*height*width
-print("input to first Neural layer has: "..inputSize.." neurons")
+dp.vprint(not opt.silent, "input to first Neural layer has: "..inputSize.." neurons")
 
 for i,hiddenSize in ipairs(opt.hiddenSize) do
    local dense = dp.Neural{
@@ -191,9 +198,12 @@ if opt.cuda then
    xp:cuda()
 end
 
-print"dp.Models :"
-print(cnn)
-print"nn.Modules :"
-print(cnn:toModule(datasource:trainSet():sub(1,32)))
+if not opt.silent then
+   print"dp.Models :"
+   print(cnn)
+   print"nn.Modules :"
+   print(cnn:toModule(datasource:trainSet():sub(1,32)))
+end
+xp:verbose(not opt.silent)
 
 xp:run(datasource)

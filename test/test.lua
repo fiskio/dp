@@ -1,6 +1,5 @@
 local mytester 
 local dptest = {}
-local mediator = dp.Mediator()
 
 function dptest.uid()
    local uid1 = dp.uniqueID()
@@ -165,13 +164,18 @@ function dptest.listview()
    local list_v = dp.ListView({image_v,data_v})
    list_v:forward({'bhwc', 'bf'}, {image_data, data}) 
    local t = list_v:forward('bf', 'torch.FloatTensor')
-   local size = {8,(32*32*3)+4}
-   mytester:assertTableEq(t:size():totable(), size, 0.0001)
-   local c = torch.concat({
-      image_v:forward('bf', 'torch.FloatTensor'), 
-      data_v:forward('bf', 'torch.FloatTensor')
-   }, 2)
-   mytester:assertTensorEq(t, c, 0.00001)
+   mytester:assertTableEq(t[1]:size():totable(), feature_size, 0.0001)
+   local list_v = dp.ListView({dp.ImageView(), dp.ImageView()})
+   list_v:forward('bhwc', {image_data, image_data:clone():add(1)})
+   local t = list_v:forward('bchw')
+   mytester:assertTensorEq(t[1], image_data:transpose(4,2):transpose(3,4), 0.00001)
+   
+   local list = dp.ListView{dp.ImageView('bchw',torch.randn(1,2,3,4)), dp.ImageView('bchw',torch.randn(1,2,3,4))}
+   local t = list:forwardGet('bhwc')
+   mytester:assertTableEq(t[1]:size():totable(), {1,3,4,2}, 0.00001)
+   list:forwardPut('bhwc',{torch.randn(1,3,4,2),torch.randn(1,3,4,2)})
+   local t = list:forwardGet('bchw')
+   mytester:assertTableEq(t[1]:size():totable(), {1,2,3,4}, 0.00001)
 end
 function dptest.carry()
    local data = torch.rand(3,4)
@@ -365,7 +369,7 @@ function dptest.neural()
    -- nn
    local mlp = nn.Sequential()
    local m = nn.Linear(10,2)
-   m:share(layer._affine, 'weight', 'bias')
+   m:share(layer._linear, 'weight', 'bias')
    mlp:add(m)
    mlp:add(nn.Tanh())
    local mlp_act = mlp:forward(tensor)
@@ -376,9 +380,7 @@ function dptest.neural()
    -- update
    local act_ten = output:forward('bf'):clone()
    local grad_ten = input:backward('bf'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    layer:doneBatch()
    -- forward backward
    output, carry2 = layer:forward(input, dp.Carry{nSample=5})
@@ -388,8 +390,8 @@ function dptest.neural()
    mytester:assertTensorNe(grad_ten, input:backward('bf'), 0.00001)
    -- accUpdate
    local layer2 = dp.Neural{input_size=10, output_size=2, transfer=nn.Tanh(), acc_update=true}
-   layer2._affine.weight = layer._affine.weight:clone()
-   layer2._affine.bias = layer._affine.bias:clone()
+   layer2._linear.weight = layer._linear.weight:clone()
+   layer2._linear.bias = layer._linear.bias:clone()
    layer2:zeroGradParameters()
    layer:zeroGradParameters()
    local input2 = dp.DataView()
@@ -403,12 +405,12 @@ function dptest.neural()
    input = layer:backward(output, carry)
    mytester:assertTensorEq(output2:forward('bf'), output:forward('bf'), 0.00001)
    mytester:assertTensorEq(input2:backward('bf'), input:backward('bf'), 0.00001)
-   mytester:assertTensorEq(layer2._affine.weight, layer._affine.weight, 0.00001)
-   mytester:assertTensorEq(layer2._affine.bias, layer._affine.bias, 0.00001)
+   mytester:assertTensorEq(layer2._linear.weight, layer._linear.weight, 0.00001)
+   mytester:assertTensorEq(layer2._linear.bias, layer._linear.bias, 0.00001)
    layer2:updateParameters(0.1)
    layer:updateParameters(0.1)
-   mytester:assertTensorEq(layer2._affine.weight, layer._affine.weight, 0.00001)
-   mytester:assertTensorEq(layer2._affine.bias, layer._affine.bias, 0.00001)
+   mytester:assertTensorEq(layer2._linear.weight, layer._linear.weight, 0.00001)
+   mytester:assertTensorEq(layer2._linear.bias, layer._linear.bias, 0.00001)
 end
 function dptest.sequential()
    local tensor = torch.randn(5,10)
@@ -429,16 +431,38 @@ function dptest.sequential()
    -- nn
    local mlp = nn.Sequential()
    mlp:add(nn.Linear(10,4))
-   mlp:get(1):share(model:get(1)._affine, 'weight', 'bias')
+   mlp:get(1):share(model:get(1)._linear, 'weight', 'bias')
    mlp:add(nn.Tanh())
    mlp:add(nn.Linear(4,2))
-   mlp:get(3):share(model:get(2)._affine, 'weight', 'bias')
+   mlp:get(3):share(model:get(2)._linear, 'weight', 'bias')
    mlp:add(nn.LogSoftMax())
    local mlp_act = mlp:forward(tensor)
    local mlp_grad = mlp:backward(tensor, grad_tensor)
    -- compare nn and dp
    mytester:assertTensorEq(mlp_act, output:forward('bf'), 0.00001)
    mytester:assertTensorEq(mlp_grad, input:backward('bf'), 0.00001)
+end
+function dptest.container()
+   -- test container:parameters()
+   local dict = dp.Dictionary{dict_size=100,output_size=10}
+   dict.forwarded = true
+   dict._lookup.inputs = {[1]=1,[3]=1,[5]=1}
+   local model = dp.Sequential{
+      models = {
+         dict,
+         dp.Neural{input_size=10, output_size=2, transfer=nn.LogSoftMax()}
+      }
+   }
+   local params, gradParams, scales = model:parameters()
+   local nParam = table.length(params)
+   local nGradParam = table.length(gradParams)
+   mytester:assert(nParam == nGradParam, "missing gradParams")
+   mytester:assert(nParam == 3+2, "missing parameters")
+   mytester:assert(torch.type(params[1]) == 'torch.DoubleTensor', "missing param 1")
+   mytester:assert(torch.type(params[3]) == 'torch.DoubleTensor', "missing param 3")
+   mytester:assert(torch.type(params[5]) == 'torch.DoubleTensor', "missing param 5")
+   mytester:assert(torch.type(params[101]) == 'torch.DoubleTensor', "missing param 101")
+   mytester:assert(torch.type(params[102]) == 'torch.DoubleTensor', "missing param 102")
 end
 function dptest.softmaxtree()
    local input_tensor = torch.randn(5,10)
@@ -484,9 +508,7 @@ function dptest.softmaxtree()
    local weight = model._module.weight:clone()
    local act_ten = output:forward('bf'):clone()
    local grad_ten = input:backward('bf'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   model:accept(visitor)
+   model:updateParameters(0.1)
    local weight2 = model._module.weight
    mytester:assertTensorNe(weight, weight2, 0.00001)
    model:doneBatch()
@@ -681,9 +703,7 @@ function dptest.convolution1D()
    -- update
    local act_ten = output:forward('bwc'):clone()
    local grad_ten = input:backward('bwc'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    layer:doneBatch()
    -- forward backward
    output, carry2 = layer:forward(input, dp.Carry{nSample=8})
@@ -726,9 +746,7 @@ function dptest.convolution2D()
    -- update
    local act_ten = output:forward('bhwc'):clone()
    local grad_ten = input:backward('bhwc'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    layer:doneBatch()
    -- forward backward
    output, carry2 = layer:forward(input, dp.Carry{nSample=8})
@@ -792,9 +810,7 @@ function dptest.dictionary()
    mytester:assertTensorEq(mlp_act, output:forward('bwc'), 0.00001)
    -- update
    local act_ten = output:forward('bwc'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    layer:doneBatch()
    -- forward backward
    output, carry2 = layer:forward(input, dp.Carry{nSample=8})
@@ -970,7 +986,7 @@ function dptest.tomodule()
    mytester:assertTensorEq(outputView:forward('default'), output, 0.00001)
 end
 function dptest.sentencesampler()
-   local nIndice = 300
+   local nIndice = 1000
    local batchSize = 10
    
    -- create dummy sentence dataset
@@ -980,9 +996,10 @@ function dptest.sentencesampler()
    local startIdx = 1
    local nSentence = 1
    local count = 0
+   local maxSize = 20
    for i=1,nIndice do
       data[i][1] = startIdx
-      if i < nIndice - 5 and count > 3 and math.random() < 0.1 then
+      if i < nIndice - 5 and count > 3 and (math.random() < 0.1 or maxSize == count) then
          data[i][2] = end_id
          startIdx = i+1
          nSentence = nSentence + 1
@@ -1004,8 +1021,12 @@ function dptest.sentencesampler()
    local batchSampler = sampler:sampleEpoch(dataset)
    local sampled = {}
    local nSampled = 0
-   while nSampled < epochSize do
-      local batch = batchSampler(batch)
+   local batch
+   while true do
+      batch = batchSampler(batch)
+      if not batch then
+         break
+      end
       mytester:assert(batch.isBatch)
       local inputs = batch:inputs():input()
       local targets = batch:targets():input()
@@ -1021,18 +1042,18 @@ function dptest.sentencesampler()
          end
       end
       nSampled = nSampled + inputs:size(1)
-   end
-   mytester:assert(not batchSampler(batch), "iterator not stoping")
+   end 
+   mytester:assert(nSampled < epochSize + maxSize * batchSize, "iterator not stoping")
    
    local epochSize = nIndice
    local dataset = dp.SentenceSet{data=data,which_set='train',start_id=start_id,end_id=end_id}
-   local sampler = dp.SentenceSampler{batch_size=batchSize,epoch_size=epochSize,evaluate=false}
+   local sampler = dp.SentenceSampler{batch_size=batchSize,epoch_size=-1,evaluate=false}
    local batchSampler = sampler:sampleEpoch(dataset)
    local sampled = {}
    local nSampled = 0
    local sampledTwice = 0
    while nSampled < epochSize do
-      local batch = batchSampler(batch)
+      batch = batchSampler(batch)
       mytester:assert(batch.isBatch)
       local inputs = batch:inputs():input()
       local targets = batch:targets():input()
@@ -1059,7 +1080,7 @@ function dptest.sentencesampler()
    local nSampled = 0
    local sampledTwice = 0
    while nSampled < epochSize do
-      local batch = batchSampler(batch)
+      batch = batchSampler(batch)
       mytester:assert(batch.isBatch)
       local inputs = batch:inputs():input()
       local targets = batch:targets():input()
@@ -1082,10 +1103,211 @@ function dptest.sentencesampler()
    mytester:assert(table.length(sampled) == nIndice-nSentence, "not all words were sampled")
 end
 
+function dptest.errorminima()
+   local report={validator={loss={avgError=11}},epoch=1}
+   local mediator = dp.Mediator()
+   local m = dp.ErrorMinima{start_epoch=5}
+   m:setup{mediator=mediator}
+   local mt = {}
+   local recv_count = 0
+   local minima, minima_epoch
+   mediator:subscribe('errorMinima', mt, 'errorMinima')
+   
+   -- test start_epoch
+   function mt:errorMinima(found_minima, m)
+      if found_minima then
+         minima, minima_epoch = m:minima()
+         recv_count = recv_count + 1
+      end
+   end
+   for epoch=1,10 do
+      report.epoch = epoch
+      m:doneEpoch(report)
+   end
+   mytester:assert(recv_count == 1, "ErrorMinima recv_count error")
+   mytester:assert(minima == 11, "ErrorMinima minima error")
+   mytester:assert(minima_epoch == 5, "ErrorMinima start_epoch error")
+
+   
+   -- test that minimas is found
+   local recv_count = 0
+   local losses = {10,8,8,9,7}
+   local cme = {11,12,15}
+   local cm = {10,8,7}
+   function mt:errorMinima(found_minima, m)
+      if found_minima then
+         minima, minima_epoch = m:minima()
+         recv_count = recv_count + 1
+         mytester:assert(losses[cme[recv_count]-10] == cm[recv_count], "ErrorMinima wrong minima")
+      end
+   end
+   for epoch=11,15 do
+      report.epoch = epoch
+      report.validator.loss.avgError = losses[epoch-10]
+      m:doneEpoch(report)
+   end
+   mytester:assert(recv_count == 3, "ErrorMinima recv_count error")
+   mytester:assert(minima == 7, "ErrorMinima minima error")
+   mytester:assert(minima_epoch == 15, "ErrorMinima epoch error")
+end
+
+function dptest.adaptivelearningrate()
+   local lr = 20
+   local mediator = dp.Mediator()
+   local m = dp.AdaptiveLearningRate{max_wait=1,decay_factor=0.1}
+   local visitor = dp.Learn{learning_rate=lr, verbose=false, observer=m}
+   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
+   
+   for epoch=1,10 do
+      if epoch % 3 == 0 then
+         mediator:publish('errorMinima', true)
+      else
+         mediator:publish('errorMinima', false)
+      end
+   end
+   lr = lr*(0.1^3)
+   mytester:assert(visitor:learningRate() == lr, "AdaptiveLearningRate learningRate error 1")
+   
+   mediator:publish('errorMinima', true)
+   mytester:assert(visitor:learningRate() == lr, "AdaptiveLearningRate learningRate error 2")
+   for epoch=1,10 do
+      mediator:publish('errorMinima', false)
+   end
+   mytester:assert(math.abs(visitor:learningRate() - lr*(0.1^5)) < 0.00001, "AdaptiveLearningRate learningRate error 3")
+end
+
+function dptest.learn()
+   local batchSize = 8
+   local inputSize = 10
+   local outputSize = 5
+   local lr, learn_scale = 0.1, 0.5
+   local mediator = dp.Mediator()
+   local input_tensor = torch.randn(batchSize, inputSize)
+   local gradOutput_tensor = torch.randn(batchSize, outputSize)
+   local input = dp.DataView('bf', input_tensor)
+   local visitor = dp.Learn{learning_rate=lr, verbose=false}
+   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
+   local neural = dp.Neural{
+      input_size=inputSize,output_size=outputSize,
+      transfer=nn.Identity(),mvstate={learn_scale=0.5}
+   }
+   local linear = neural._linear:clone()
+   linear:zeroGradParameters()
+   local output = neural:forward(input, dp.Carry{nSample=batchSize})
+   output:backward('bf', gradOutput_tensor)
+   neural:backward(output, dp.Carry{nSample=batchSize})
+   neural:accept(visitor)
+   local output_tensor = linear:forward(input_tensor)
+   local gradInput_tensor = linear:backward(input_tensor, gradOutput_tensor)
+   linear:updateParameters(lr*learn_scale)
+   local params = neural:parameters()
+   local params2 = linear:parameters()
+   for i, param in ipairs(params) do
+      mytester:assertTensorEq(param, params2[i], 0.000001, "learn error")
+   end
+end
+
+function dptest.recurrentvisitorchain()
+   local batchSize = 8
+   local inputSize = 10
+   local outputSize = 5
+   local lr = 0.1
+   local updateInterval = 3
+   local input_tensor = torch.randn(batchSize, inputSize)
+   local gradOutput_tensor = torch.randn(batchSize, outputSize)
+   local input = dp.DataView('bf', input_tensor)
+   
+   local visitor = dp.RecurrentVisitorChain{
+      visit_interval = updateInterval, force_forget = false,
+      visitors = {dp.Learn{learning_rate = lr, verbose=false}}
+   }
+   local mediator = dp.Mediator()
+   visitor:setup{mediator=mediator, id=dp.ObjectID('recurrent')}
+   
+   local neural = dp.Neural{input_size=inputSize,output_size=outputSize,transfer=nn.Identity()}
+   local linear = neural._linear:clone()
+   linear:zeroGradParameters()
+   
+   for i = 1,10 do
+      local output = neural:forward(input, dp.Carry{nSample=batchSize})
+      output:backward('bf', gradOutput_tensor)
+      neural:backward(output, dp.Carry{nSample=batchSize})
+      neural:accept(visitor)
+      
+      local output_tensor = linear:forward(input_tensor)
+      local gradInput_tensor = linear:backward(input_tensor, gradOutput_tensor)
+      if i % 3 == 0 then
+         linear:updateParameters(lr)
+         linear:zeroGradParameters()
+      end
+   end
+   local params = neural:parameters()
+   local params2 = linear:parameters()
+   for i, param in ipairs(params) do
+      mytester:assertTensorEq(param, params2[i], 0.000001, "recurrent visitor chain error")
+   end
+end
+
+function dptest.savetofile()
+   local mediator = dp.Mediator()
+   local stf = dp.SaveToFile{in_memory=true,verbose=false}
+   local subject = {
+      tensor=torch.randn(3,4), stf=stf,
+      id=function()return{toPath=function()return'test462346';end};end
+   }
+   stf:setup(subject, mediator)
+   local path = paths.concat(stf._save_dir, stf._filename)
+   if paths.filep(path) then
+      os.execute('rm '..path)
+   end
+   stf:save(subject)
+   mediator:publish("doneExperiment")
+   mytester:assert(paths.filep(path), "file doesn't exist")
+   local saved_subject = torch.load(path)
+   mytester:assert(not saved_subject.stf._save_cache, "cache was saved")
+   mytester:assertTensorEq(subject.tensor, saved_subject.tensor, 0.000001, "tensor not saved")
+   
+   stf = saved_subject.stf
+   mediator = saved_subject.stf._mediator
+   subject = saved_subject
+   subject.tensor = torch.randn(3,4)
+   stf:save(subject)
+   mediator:publish("doneExperiment")
+   local saved_subject = torch.load(path)
+   mytester:assertTensorEq(subject.tensor, saved_subject.tensor, 0.000001, "tensor not re saved")
+end
+
+function dptest.topcrop()
+   local fb = dp.TopCrop{n_top={1,3}, n_crop=3,center=1,verbose=false}
+   fb._id = dp.ObjectID('topcrop')
+   local carry = dp.Carry{nSample=18}
+   local preds = {{1,0,0,0,0,0},{1,0,0,0,0,0},{1,0,0,0,0,0}, -- 1,1
+                   {0,1,0,0,0,0},{0,1,0,0,0,0},{0,1,0,0,0,0}, -- 1,1
+                   {0,1,0,0,0,0},{0,0,1,0,0,0},{0,0,1,0,0,0}, -- 1,1
+                   {1,0,0,2,0,0},{1,0,0,2,0,0},{1,0,0,2,0,0}, -- 0,1
+                   {0,-1,0,0,2,0},{0,0,0,0,2,0},{0,-1,0,0,2,0}, -- 0,0
+                   {0,0,-1,0,0,1},{0,0,-1,0,0,1},{0,0,-1,0,0,1}} -- 0,0
+   preds = torch.FloatTensor(preds)
+   local targets = torch.IntTensor{1,1,1,2,2,2,3,3,3,1,1,1,2,2,2,3,3,3}
+   local inputs = torch.randn(18,1,5,5)
+   local outputView = dp.DataView('bf', preds)
+   local targetView = dp.ClassView('b', targets)
+   local inputView = dp.ImageView('bchw', inputs)
+   local batch = dp.Batch{inputs=inputView, targets=targetView, carry=carry}
+   fb:add(batch, outputView, carry, {epoch=1})
+   fb:add(batch, outputView, carry, {epoch=1})
+   fb:doneEpoch({epoch=1})
+   local report = fb:report()
+   mytester:assert(report.topcrop.all[1] == 50, "topcrop all 1 error")
+   mytester:assert(math.round(report.topcrop.all[3]) == 67, "topcrop all 3 error")
+   mytester:assert(math.round(report.topcrop.center[1]) == 33, "topcrop center 1 error")
+   mytester:assert(math.round(report.topcrop.center[3]) == 67, "topcrop center 3 error")
+end
+
 function dp.test(tests)
    math.randomseed(os.time())
    mytester = torch.Tester()
-   mytester.lenna = image.loadPNG("test/Lenna.png")
+   mytester.lenna = image.lena()
    mytester:add(dptest)
    mytester:run(tests)   
    return mytester

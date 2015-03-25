@@ -31,7 +31,7 @@ function Confusion:setup(config)
 end
 
 function Confusion:doneEpoch(report)
-   if self._cm then
+   if self._cm and self._verbose then
       print(self._id:toString().." accuracy = "..self._cm.totalValid)
    end
 end
@@ -39,7 +39,11 @@ end
 function Confusion:_add(batch, output, carry, report)
    if not self._cm then
       require 'optim'
-      self._cm = optim.ConfusionMatrix(batch:targets():classes())
+      if self._bce then
+         self._cm = optim.ConfusionMatrix({0,1})
+      else
+         self._cm = optim.ConfusionMatrix(batch:targets():classes())
+      end
    end
    
    -- binary cross-entropy has one output

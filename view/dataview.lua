@@ -27,6 +27,9 @@ function DataView:forwardPut(view, input)
    if input:dim() ~= self._dim then
       error("view has more axes than input has dims", 3)
    end
+   if self._view and (view ~= self._view) then
+      self._modules = nil
+   end
    self._view = view
    self._input = input
    -- since this method is called only once at beginning of batch,
@@ -107,7 +110,8 @@ function DataView:backwardGet(view, tensor_type)
    if view and view ~= self._view then
       error(torch.type(self)..
          ": backwardGet should be called with same view used for "..
-         "last forward (or nil) i.e. ".. self._view .. " not " .. view)
+         "last forward (or nil) i.e. ".. (self._view or 'nil') .. 
+         " not " .. (view or 'nil'))
    end
    if tensor_type and self._type ~= tensor_type then
       error(torch.type(self)..

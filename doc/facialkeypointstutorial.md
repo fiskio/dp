@@ -1,4 +1,5 @@
 <a name="FacialKeypointsTutorial"/>
+[]()
 # Facial Keypoints Tutorial #
 In this tutorial, we demonstrate how the __dp__ library can be used 
 to build convolution neural networks and easily extended using Feedback 
@@ -53,11 +54,12 @@ preparing Kaggle submissions when new minima on the valid set are found
 ## Building Components ##
 From the above analysis, we can begin to draw a roadmap of components to 
 build :
- 1. [FacialKeypoints](#facialkeypoints) : wrapper for the DataSource;
- 2. [FKDKaggle](#fkdkaggle) : a Feedback for creating a Kaggle submission out of predictions;
- 3. [FacialKeypointFeedback](#facialkeypointfeedback) : a Feedback for monitoring performance (and comparing to baseline);
- 4. [MultiSoftMax](#multisoftmax) : a nn.Module that will allow us to apply a softmax for each keypoint;
- 5. [facialkeypointsdetector.lua](#facialkeypointsdetector.lua) : main launch script; 
+
+  1. [FacialKeypoints](#facialkeypoints) : wrapper for the DataSource;
+  2. [FKDKaggle](#fkdkaggle) : a Feedback for creating a Kaggle submission out of predictions;
+  3. [FacialKeypointFeedback](#facialkeypointfeedback) : a Feedback for monitoring performance (and comparing to baseline);
+  4. [MultiSoftMax](#multisoftmax) : a nn.Module that will allow us to apply a softmax for each keypoint;
+  5. [facialkeypointsdetector.lua](#facialkeypointsdetector.lua) : main launch script; 
 
 ### FacialKeypoints ###
 The first task of any machine learning endeavor is to prepare the 
@@ -291,7 +293,7 @@ this DataSource's `loadSubmission` and `loadBaseline` methods.
 Feedbacks are a little tricky to get the hang of,
 but are very useful for extending an experiment with task-tailored 
 I/O functionality. 
-The [FKDKaggle](../feedback/fkdkaggle.lua) is a Feedback class 
+The [FKDKaggle](https://github.com/nicholas-leonard/dp/blob/master/feedback/fkdkaggle.lua) is a Feedback class 
 used to prepare Kaggle submissions and 
 persist them to disk in CSV-format each time a new minima is found on 
 the validation set. 
@@ -413,18 +415,21 @@ prepared when a new minima is discovered by the EarlyStopper. Almost
 all objects part of an Experiment can communicate via the Mediator 
 [Singleton](https://en.wikipedia.org/wiki/Singleton_pattern). Listeners 
 need only subscribe to a channel and register a callback. In this case, both 
-have the same name: `foundMinima`. The EarlySopper notifies the `foundMinima` 
-channel (via the Mediator) every time a new minima is found and this gets 
-results in all registered callbacks being activated. In our case, this 
+have the same name: `errorMinima`. The EarlySopper notifies the `errorMinima` 
+channel (via the Mediator) every epoch, which results in all registered 
+callbacks being notified. If a new minima is found, it passes the 
+first argument as true, otherwise its false. In our case, this 
 means the CSV file is created: 
 ```lua
 function FKDKaggle:setup(config)
    parent.setup(self, config)
-   self._mediator:subscribe("foundMinima", self, "foundMinima")
+   self._mediator:subscribe("errorMinima", self, "errorMinima")
 end
 
-function FKDKaggle:foundMinima()
-   csvigo.save{path=self._path,data=self._submission,mode='raw'}
+function FKDKaggle:errorMinima(found_minima)
+   if found_minima then
+      csvigo.save{path=self._path,data=self._submission,mode='raw'}
+   end
 end
 ```
 
@@ -433,11 +438,11 @@ Unlike the previous Feedback which is used for preparing submissions
 base on the model predictions given the test set, this one is used for 
 the train and valid set. Its can take an optional baseline Tensor, 
 which contains the mean of the 30 keypoints over the train and valid set. 
-We built a [simple script](../examples/fkdbaseline.lua) to prepare this 
+We built a [simple script](https://github.com/nicholas-leonard/dp/blob/master/examples/fkdbaseline.lua) to prepare this 
 baseline and generate `baseline.th7`, which can be obtained via the 
 [FacialKeypoints](#FacialKeypoints) DataSource. 
 
-The [FacialKeypointFeedback](../feedback/facialkeypointfeedback.lua) 
+The [FacialKeypointFeedback](feedback.md#dp.FacialKeypointFeedback) 
 is initialized with the `baseline` (optional) and the precision (size) 
 of the keypoint vectors (in our case, 98). Notice again how we 
 initialize a Tensor for each intermediate operation we require. This 
@@ -557,7 +562,7 @@ end
 Finally, a report is prepared every epoch. It includes field `mse`, which
 contains the MSE of predictions. This will be useful later when we 
 will need to early-stop on minima found on the validation set:
-```
+```lua
 function FacialKeypointFeedback:report()
    return { 
       [self:name()] = {
@@ -660,7 +665,7 @@ end
 ```
 
 ### facialkeypointsdetector.lua ###
-The final component is the [script](../examples/facialkeypointsdetector.lua) 
+The final component is the [script](https://github.com/nicholas-leonard/dp/blob/master/examples/facialkeypointdetector.lua) 
 that provides different cmd-line options for specifying Model assembly 
 and Experiment hyper-parameters. 
 
@@ -713,7 +718,7 @@ print(opt)
 assert(opt.submissionFile ~= '', 'provide filename, e.g.: --submissionFile submission12.csv')
 ```
 The table values need to be translated from strings to tables using the 
-[table.fromString](../utils/table.md) function:
+[table.fromString](https://github.com/nicholas-leonard/dp/blob/master/utils/table.lua) function:
 ```lua
 opt.channelSize = table.fromString(opt.channelSize)
 opt.kernelSize = table.fromString(opt.kernelSize)
@@ -748,6 +753,7 @@ Next we build the [Model](model.md#dp.Model). The Model can be a
 Convolution Neural Network (CNN) or a Multi-Layer Neural Network (NN). 
 The CNN can be configured for one or many Convolution2D Layers 
 followed by two Neural Layers. The NN can have 2 or 3 Neural Layers:
+```
 --[[Model]]--
 
 cnn = dp.Sequential()

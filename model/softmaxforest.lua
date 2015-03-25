@@ -68,10 +68,9 @@ function SoftmaxForest:__init(config)
 end
 
 function SoftmaxForest:zeroGradParameters()
+   -- SoftMaxTrees won't zeroGrad but will erase updates table
+   self._experts:zeroGradParameters()
    if not self._acc_update then
-      for i=1,self._experts:size() do
-         self._experts:get(i):zeroGradParameters(true)
-      end
       self._gater:zeroGradParameters()      
    end
 end
@@ -88,9 +87,9 @@ function SoftmaxForest:parameters()
          param[n+k] = p
          gradParam[n+k] = gradParamE[k]
       end
-      n = n+(smt.maxParentId*2)
+      n = n+(smt.nChildNode*2)
    end
-   return param, gradParam
+   return param, gradParam, nil, n
 end
 
 function SoftmaxForest:sharedClone()

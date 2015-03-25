@@ -78,7 +78,6 @@ function Container:doneBatch(...)
    for i=1,#self._models do
       self._models[i]:doneBatch(...)
    end
-   -- stops parent from calling zeroGradParameters (again)
    self.backwarded = false
    parent.doneBatch(self, ...)
 end
@@ -96,9 +95,37 @@ function Container:reset(stdv)
 end
 
 function Container:parameters()
-   error"Not Implemented"
+   local params = {}
+   local gradParams = {}
+   local scales = {}
+   local idx = 0
+   for i=1,#self._models do
+      local param, gradParam, scale, size = self._models[i]:parameters()
+      local n = 0
+      if param then
+         for k,p in pairs(param) do
+            params[idx+k] = p
+            if gradParam then
+               gradParams[idx+k] = gradParam[k]
+            end
+            if scale then
+               scales[idx+k] = scale[k] 
+            end
+            n = n + 1
+         end
+      end
+      idx = idx + (size or n)
+   end
+   return params, gradParams, scales, idx
 end
 
 function Container:_toModule()
    error"Not Implemented"
+end
+
+function Container:verbose(verbose)
+   self._verbose = (verbose == nil) and true or verbose
+   for k, v in pairs(self._models) do
+      v:verbose(self._verbose)
+   end
 end

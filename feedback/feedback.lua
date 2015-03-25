@@ -6,40 +6,23 @@
 -- Like observers they may also publish/subscribe to mediator channels.
 -- When serialized with the model, they may also be unserialized to
 -- generate graphical reports (see Confusion).
-
--- Discussion :
--- Need a way to inform components of error for various feedback units
--- For logging, report will be enough, but for samplers, models and such
--- that require access to the error of individual examples for every 
--- epoch, its not enough. 
--- First solution is to allow for feedback to modify batch object that 
--- will be returned during backwards pass. Second solution would be 
--- to use the mediator : have feedback publish individual errors, 
--- have model subscribe to this channel. The second solution is much 
--- more flexible, in that it doesn't require the Batch object to have 
--- preimplemented methods. Furthermore, we could save ourselves the 
--- hasle of reimplementing the criteria, by making the Feedback a 
--- propagator constructor parameter. It receives outputs, targets, 
--- can measure error and send it back. If this proves insufficiently
--- flexible
-
--- TODO :
--- Feedbacks publish feedback to channels which visitors, models, etc 
---    can subscribe to
 ------------------------------------------------------------------------
 local Feedback = torch.class("dp.Feedback")
 Feedback.isFeedback = true
 
 function Feedback:__init(config)
    assert(type(config) == 'table', "Constructor requires key-value arguments")
-   local args, name = xlua.unpack(
+   local args, verbose, name = xlua.unpack(
       {config},
       'Feedback', 
       'strategies for processing predictions and targets.',
+      {arg='verbose', type='boolean', default=true,
+       help='provide verbose outputs every epoch'},
       {arg='name', type='string', req=true,
        help='used to identify report'}
    )
    self._name = name
+   self._verbose = verbose
    self._n_sample = 0
 end
 
@@ -49,7 +32,8 @@ function Feedback:setup(config)
       {config},
       'Feedback:setup', 
       'setup the Feedback for mediation and such',
-      {arg='mediator', type='dp.Mediator'},
+      {arg='mediator', type='dp.Mediator', 
+       help='used for inter-object communication. defaults to dp.Mediator()'},
       {arg='propagator', type='dp.Propagator'},
       {arg='dataset', type='dp.DataSet', 
        help='This might be useful to determine the type of targets. ' ..
@@ -73,6 +57,10 @@ function Feedback:name()
    return self._id:name()
 end
 
+function Feedback:savePath()
+   return self:id():toPath()
+end
+
 --accumulates information from the batch
 function Feedback:add(batch, output, carry, report)
    assert(batch.isBatch, "First argument should be Batch")
@@ -93,4 +81,12 @@ function Feedback:reset()
 end
 
 function Feedback:_reset()
+end
+
+function Feedback:verbose(verbose)
+   self._verbose = (verbose == nil) and true or verbose
+end
+
+function Feedback:silent()
+   self:verbose(false)
 end
