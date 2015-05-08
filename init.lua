@@ -76,6 +76,7 @@ torch.include('dp', 'data/facialkeypoints.lua')
 torch.include('dp', 'data/billionwords.lua')
 torch.include('dp', 'data/svhn.lua')
 torch.include('dp', 'data/imagenet.lua')
+torch.include('dp', 'data/imagesource.lua')
 
 --[[ sampler ]]--
 torch.include('dp', 'sampler/sampler.lua')
@@ -117,6 +118,7 @@ torch.include('dp', 'visitor/maxnorm.lua')
 torch.include('dp', 'visitor/weightdecay.lua')
 torch.include('dp', 'visitor/learn.lua')
 torch.include('dp', 'visitor/momentum.lua')
+torch.include('dp', 'visitor/gradclip.lua')
 
 --[[ observer ]]--
 torch.include('dp', 'observer/observer.lua')
