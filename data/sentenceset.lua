@@ -137,7 +137,7 @@ function SentenceSet:sub(batch, start, stop)
    targets:copy(data:select(2,2))
    
    -- sanitize
-   --inputs, targets = self:sanitize(inputs, targets)
+   inputs, targets = self:sanitize(inputs, targets)
    -- check
    --self:checkTargets(targets)
 
@@ -205,7 +205,7 @@ function SentenceSet:index(batch, indices)
    
    targets:copy(data:select(2,2))
    -- sanitize
-   --inputs, targets = self:sanitize(inputs, targets)
+   inputs, targets = self:sanitize(inputs, targets)
    -- check
    --self:checkTargets(targets)
 
