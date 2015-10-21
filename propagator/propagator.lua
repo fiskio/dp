@@ -119,7 +119,7 @@ function Propagator:propagateEpoch(dataset, report)
       
       if self._progress then
          -- display progress
-         xlua.progress(i, n)
+         if i%10==0 then xlua.progress(i, n) end
       end
       last_n = n
       n_batch = n_batch + 1
