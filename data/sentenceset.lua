@@ -136,6 +136,11 @@ function SentenceSet:sub(batch, start, stop)
    -- targets
    targets:copy(data:select(2,2))
    
+   -- sanitize
+   inputs, targets = self:sanitize(inputs, targets)
+   -- check
+   --self:checkTargets(targets)
+
    -- encapsulate in dp.ClassViews
    input_v:forward('bt', inputs)
    input_v:setClasses(self._words)
@@ -197,8 +202,13 @@ function SentenceSet:index(batch, indices)
       end
    end   
    -- targets
-   targets:copy(data:select(2,2))
    
+   targets:copy(data:select(2,2))
+   -- sanitize
+   inputs, targets = self:sanitize(inputs, targets)
+   -- check
+   --self:checkTargets(targets)
+
    -- encapsulate in dp.Views
    input_v:forward('bt', inputs)
    input_v:setClasses(self._words)
@@ -212,6 +222,27 @@ function SentenceSet:index(batch, indices)
       which_set=self:whichSet(), epoch_size=self:nSample(),
       inputs=input_v, targets=target_v, carry=carry
    }  
+end
+
+function SentenceSet:sanitize(inputs, targets)
+   local good_idx = {}
+   for i=1,targets:size(1) do
+      if targets[i] ~= 1 then
+         good_idx[#good_idx+1] = i
+      end
+   end
+   local tgi = torch.LongTensor(good_idx)
+   local s_inputs = inputs:index(1, tgi)
+   local s_targets = targets:index(1, tgi)
+   return s_inputs, s_targets
+end
+
+function SentenceSet:checkTargets(targets)
+   local unk = 0
+   for i=1,targets:size(1) do
+      if targets[i] == 1 then unk = unk + 1 end
+   end
+   print(string.format('Bad Targets %s of %s - %.1f%%', unk, targets:size(1), 100*unk/targets:size(1)))
 end
 
 -- returns sentence start indices organized by sentence size.
