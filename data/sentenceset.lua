@@ -227,7 +227,7 @@ end
 function SentenceSet:sanitize(inputs, targets)
    local good_idx = {}
    for i=1,targets:size(1) do
-      if targets[i] ~= 1 then
+      if targets[i] < 1136 and targets[i] ~= 1 then
          good_idx[#good_idx+1] = i
       end
    end
